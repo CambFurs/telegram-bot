@@ -1,11 +1,30 @@
 class BotController < ApplicationController
 
-  def send_message(chat_id, message, reply_to_id = nil)
-    response = HTTP.get("https://api.telegram.org/bot#{Rails.application.credentials.bot_api!}/sendMessage", params: {chat_id: chat_id, text: message, reply_to_message_id: reply_to_id})
+  def send_message(chat_id, message, reply_to_id = nil, reply_markup = nil)
+    response = HTTP.get("https://api.telegram.org/bot#{Rails.application.credentials.bot_api!}/sendMessage", params: {chat_id: chat_id, text: message, reply_to_message_id: reply_to_id, reply_markup: reply_markup})
     if response.status.success?
       debug("Message sent: #{message}\nResponse: #{response.body}")
     else
       debug("Error sending message: #{message}\nError: #{response.body}")
+    end
+  end
+
+  def request_link(group_id)
+    response = HTTP.get("https://api.telegram.org/bot#{Rails.application.credentials.bot_api!}/exportChatInviteLink", params: {chat_id: group_id})
+    if response.status.success?
+      debug("Link requested:\nResponse: #{response.body}")
+      return response.parse["result"]
+    else
+      debug("Error requesting link:\nError: #{response.body}")
+    end
+  end
+
+  def remove_user(group_id, user_id)
+    response = HTTP.get("https://api.telegram.org/bot#{Rails.application.credentials.bot_api!}/unbanChatMember", params: {chat_id: group_id, user_id: user_id})
+    if response.status.success?
+      debug("Link requested:\nResponse: #{response.body}")
+    else
+      debug("Error requesting link:\nError: #{response.body}")
     end
   end
 
@@ -80,7 +99,7 @@ class BotController < ApplicationController
       new_user = User.where(user_id: params[:message][:from][:id]).none? ? User.create(username: params[:message][:from][:first_name], user_id: params[:message][:from][:id], approved: false) : User.find_by(user_id: params[:message][:from][:id])
       message = "Admin request sent, please wait for approval."
       send_message(Rails.application.credentials.owner_id!, "New admin request for #{new_user.username}.\nTo approve, please reply to next message with /approve")
-      send_message(Rails.application.credentials.owner_id!, "#{new_user.user_id}")
+      send_message(Rails.application.credentials.owner_id!, "#{new_user.user_id}", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"Approve?\"}")
     else
       message = "You are already an admin, no need to apply again."
     end
@@ -89,7 +108,7 @@ class BotController < ApplicationController
 
   def help
     debug("Help message")
-    send_message(params[:message][:chat][:id], "This bot is for CambFurs admins to help administrate our Telegram chats.\nInitial available commands:\n\/help - This message\n\/start - Initial welcome message\n\/apply - Send a request to become an admin\n\nOnce approved, you can use the following commands:\n\/list_admins - List all admins and their user_id\n\/list_messages - List of all messages\n\/edit_message - Edit a message which I post\n\/blacklist - List all words on the blacklist\n\/add_blacklist - Add a word to the blacklist\n\/remove_blacklist - Remove a word from the blacklist\n\nOnly my owner can use these commands:\n\/approve - Approve an admin\n\/revoke user_id - Revoke admin access\n\/add_message - add a new message to the system for me to use\n\/delete_message - Delete a message from my memory")
+    send_message(params[:message][:chat][:id], "This bot is for CambFurs admins to help administrate our Telegram chats.\nInitial available commands:\n\/help - This message\n\/start - Initial welcome message\n\/apply - Send a request to become an admin\n\nOnce approved, you can use the following commands:\n\/list_admins - List all admins and their user_id\n\/list_messages - List of all messages\n\/edit_message - Edit a message which I post\n\/blacklist - List all words on the blacklist\n\/add_blacklist - Add a word to the blacklist\n\/remove_blacklist - Remove a word from the blacklist\n\nOnly my owner can use these commands:\n\/approve - Approve an admin\n\/revoke user_id - Revoke admin access\n\/add_message - add a new message to the system for me to use\n\/delete_message - Delete a message from my memory\n\nThis can only be used in the lobby:\n\/link - Creates a link for a user to join the main group")
   end
 
   def list_admins
@@ -121,12 +140,14 @@ class BotController < ApplicationController
   def add_message
     debug("New message request from #{params[:message][:from][:first_name]}")
     message = ""
+    force_reply = nil
     if params[:message][:from][:id] == Rails.application.credentials.owner_id!
       message = "Reply to this message with the new message in the format:\nmessage_name - message"
+      force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name - message\"}"
     else
       message = "Only my owner can use this command. Sorry! 😢"
     end
-    send_message(params[:message][:chat][:id], message)
+    send_message(params[:message][:chat][:id], message, nil, force_reply)
   end
 
   def new_message
@@ -149,12 +170,14 @@ class BotController < ApplicationController
   def delete_message
     debug("Delete message request from #{params[:message][:from][:first_name]}")
     message = ""
+    force_reply = nil
     if params[:message][:from][:id] == Rails.application.credentials.owner_id!
       message = "Reply to this message with the message_name you'd like to delete."
+      force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name\"}"
     else
       message = "Only my owner can use this command. Sorry! 😢"
     end
-    send_message(params[:message][:chat][:id], message)
+    send_message(params[:message][:chat][:id], message, nil, force_reply)
   end
 
   def destroy_message
@@ -179,8 +202,10 @@ class BotController < ApplicationController
   def edit_message
     debug("Edit message request from #{params[:message][:from][:first_name]}")
     message = ""
+    force_reply = nil
     if !User.where(user_id: params[:message][:from][:id], approved: true).none?
         message = "Reply to this message with the edited message in the format:\nmessage_name - message"
+        force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name - new message\"}"
     else
       message = "Sorry, only admins can use this command."
     end
@@ -226,63 +251,88 @@ class BotController < ApplicationController
   end
 
   def parse_details(message, username = "")
-    message = Message.find_by(message_id: "lobby_welcome").message
+    message = Message.find_by(message_id: message).message
     message = message.gsub(/{username}/, username)
     return message
   end
 
-  def index
-    if params[:message].present? && params[:message][:from][:id] == params[:message][:chat][:id] # Ensure message came from private chat
+  def main_link
+    debug("Generating link for main chat for #{params[:message][:from][:username]}")
+    send_message(params[:message][:chat][:id], "Please use the following link to join the main chat.\nThis is a single use link and will no longer work once you've joined.\n\n#{request_link(Rails.application.credentials.main_id!)}")
+  end
 
-      if params[:message][:entities].present? && params[:message][:entities][0][:type] == "bot_command"
-        case params[:message][:text]
-          when /^\/start/ # Initial start/welcome message
-            start
-          when /^\/approve/ # Approve admin request
-            approve
-          when /^\/revoke/ # Revoke admin access
-            revoke
-          when /^\/apply/ # Apply to gain admin access
-            apply
-          when /^\/help/ # List all commands
-            help
-          when /^\/list_admins/ # List all admins
-            list_admins
-          when /^\/blacklist/ # List all words on the blacklist
-            #list blacklist
-          when /^\/add_blacklist/ # Add word to blacklist
-            #add to blacklist
-          when /^\/remove_blacklist/ # Remove word from blacklist
-            #remove from blacklist
-          when /^\/list_messages/ # List all configurable messages
-            list_messages
-          when /^\/add_message/ # Add configurable message
-            add_message
-          when /^\/delete_message/ # Remove configurable message
-            delete_message
-          when /^\/edit_message/ # Edit configurable message
-            edit_message
-          else
-            send_message(params[:message][:chat][:id], "Sorry, command not found")
+  def index
+    if params[:message].present? # Message received
+      if params[:message][:from][:id] == params[:message][:chat][:id] # Ensure message came from private chat
+
+        if params[:message][:entities].present? && params[:message][:entities][0][:type] == "bot_command"
+          case params[:message][:text]
+            when /^\/start/ # Initial start/welcome message
+              start
+            when /^\/approve/ # Approve admin request
+              approve
+            when /^\/revoke/ # Revoke admin access
+              revoke
+            when /^\/apply/ # Apply to gain admin access
+              apply
+            when /^\/help/ # List all commands
+              help
+            when /^\/list_admins/ # List all admins
+              list_admins
+            when /^\/blacklist/ # List all words on the blacklist
+              #list blacklist
+            when /^\/add_blacklist/ # Add word to blacklist
+              #add to blacklist
+            when /^\/remove_blacklist/ # Remove word from blacklist
+              #remove from blacklist
+            when /^\/list_messages/ # List all configurable messages
+              list_messages
+            when /^\/add_message/ # Add configurable message
+              add_message
+            when /^\/delete_message/ # Remove configurable message
+              delete_message
+            when /^\/edit_message/ # Edit configurable message
+              edit_message
+            else
+              send_message(params[:message][:chat][:id], "Sorry, command not found")
+          end
+        elsif params[:message][:reply_to_message].present? && params[:message][:reply_to_message][:from][:username] == Rails.application.credentials.bot_username! # Reply to bot
+          case params[:message][:reply_to_message][:text]
+            when /^Reply to this message with the new message in the format:/
+              new_message
+            when /^Reply to this message with the message_name you'd like to delete./
+              destroy_message
+            when /^Reply to this message with the edited message in the format:/
+              save_message
+            else
+              send_message(params[:message][:chat][:id], "I'm sorry, I don't quite understand")
+          end
         end
-      elsif params[:message][:reply_to_message].present? && params[:message][:reply_to_message][:from][:username] == Rails.application.credentials.bot_username! # Reply to bot
-        case params[:message][:reply_to_message][:text]
-          when /^Reply to this message with the new message in the format:/
-            new_message
-          when /^Reply to this message with the message_name you'd like to delete./
-            destroy_message
-          when /^Reply to this message with the edited message in the format:/
-            save_message
-          else
-            send_message(params[:message][:chat][:id], "I'm sorry, I don't quite understand")
+      elsif params[:message][:chat][:id] == Rails.application.credentials.lobby_id! # Lobby chat
+
+        if params[:message][:entities].present? && params[:message][:entities][0][:type] == "bot_command"
+          case params[:message][:text]
+            when /^\/link/ # Initial start/welcome message
+              main_link
+          end
+          
         end
+      elsif params[:message][:chat][:id] == Rails.application.credentials.main_id! # Main chat
+        
       end
-    elsif params[:chat_member].present? && params[:chat_member][:new_chat_member].present? && params[:chat_member][:new_chat_member][:status] == "member" # Check for new chat member
-      debug("New user entered the lobby")
-      User.where(approved: true).each do |user|
-        send_message(user.user_id, "New user in the CambFurs lobby:\n#{params[:chat_member][:new_chat_member][:user][:first_name]}")
+    elsif params[:chat_member].present? && params[:chat_member][:old_chat_member][:status] != "member" && params[:chat_member][:new_chat_member][:status] == "member" # Check for new chat member
+      if params[:chat_member][:chat][:id] == Rails.application.credentials.lobby_id! # Lobby chat
+        debug("New user entered the lobby")
+        User.where(approved: true).each do |user|
+          send_message(user.user_id, "New user in the CambFurs lobby:\n#{params[:chat_member][:new_chat_member][:user][:first_name]}")
+        end
+        send_message(params[:chat_member][:chat][:id], parse_details("lobby_welcome", params[:chat_member][:new_chat_member][:user][:first_name]))
+      elsif params[:chat_member][:chat][:id] == Rails.application.credentials.main_id! # Main chat
+        debug("New user entered the main chat")
+        send_message(params[:chat_member][:chat][:id], parse_details("main_welcome", params[:chat_member][:new_chat_member][:user][:first_name]))
+        remove_user(Rails.application.credentials.lobby_id!, params[:chat_member][:new_chat_member][:user][:id])
+        request_link(Rails.application.credentials.main_id!)
       end
-      send_message(params[:chat_member][:chat][:id], parse_details("lobby_welcome", params[:chat_member][:new_chat_member][:user][:first_name]))
     end
   end
 
