@@ -9,6 +9,15 @@ class BotController < ApplicationController
     end
   end
 
+  def forward_message(chat_id, origin_chat_id, message_id)
+    response = HTTP.get("https://api.telegram.org/bot#{Rails.application.credentials.bot_api!}/forwardMessage", params: {chat_id: chat_id, from_chat_id: origin_chat_id, message_id: message_id})
+    if response.status.success?
+      debug("Message forwarded\nResponse: #{response.body}")
+    else
+      debug("Error farwarding message\nError: #{response.body}")
+    end
+  end
+
   def request_link(group_id)
     response = HTTP.get("https://api.telegram.org/bot#{Rails.application.credentials.bot_api!}/exportChatInviteLink", params: {chat_id: group_id})
     if response.status.success?
@@ -22,9 +31,9 @@ class BotController < ApplicationController
   def remove_user(group_id, user_id)
     response = HTTP.get("https://api.telegram.org/bot#{Rails.application.credentials.bot_api!}/unbanChatMember", params: {chat_id: group_id, user_id: user_id})
     if response.status.success?
-      debug("Link requested:\nResponse: #{response.body}")
+      debug("Link rotated:\nResponse: #{response.body}")
     else
-      debug("Error requesting link:\nError: #{response.body}")
+      debug("Error rotating link:\nError: #{response.body}")
     end
   end
 
@@ -108,7 +117,7 @@ class BotController < ApplicationController
 
   def help
     debug("Help message")
-    send_message(params[:message][:chat][:id], "This bot is for CambFurs admins to help administrate our Telegram chats.\nInitial available commands:\n\/help - This message\n\/start - Initial welcome message\n\/apply - Send a request to become an admin\n\nOnce approved, you can use the following commands:\n\/list_admins - List all admins and their user_id\n\/list_messages - List of all messages\n\/edit_message - Edit a message which I post\n\/blacklist - List all words on the blacklist\n\/add_blacklist - Add a word to the blacklist\n\/remove_blacklist - Remove a word from the blacklist\n\nOnly my owner can use these commands:\n\/approve - Approve an admin\n\/revoke user_id - Revoke admin access\n\/add_message - add a new message to the system for me to use\n\/delete_message - Delete a message from my memory\n\nThis can only be used in the lobby:\n\/link - Creates a link for a user to join the main group")
+    send_message(params[:message][:chat][:id], "This bot is for CambFurs admins to help administrate our Telegram chats.\nInitial available commands:\n\/help - This message\n\/start - Initial welcome message\n\/apply - Send a request to become an admin\n\nOnce approved, you can use the following commands:\n\/list_admins - List all admins and their user_id\n\/list_messages - List of all messages\n\/edit_message - Edit a message which I post\n\/list_blacklist - List all words on the blacklist\n\/add_blacklist - Add a word to the blacklist\n\/delete_blacklist - Remove a word from the blacklist\n\/update_name - Updates your name in the admin list to your current name\n\nOnly my owner can use these commands:\n\/approve - Approve an admin\n\/revoke user_id - Revoke admin access\n\/add_message - add a new message to the system for me to use\n\/delete_message - Delete a message from my memory\n\nThis can only be used in the lobby:\n\/link - Creates a link for a user to join the main group")
   end
 
   def list_admins
@@ -209,7 +218,7 @@ class BotController < ApplicationController
     else
       message = "Sorry, only admins can use this command."
     end
-    send_message(params[:message][:chat][:id], message)
+    send_message(params[:message][:chat][:id], message, nil, force_reply)
   end
 
   def save_message
@@ -238,16 +247,87 @@ class BotController < ApplicationController
     send_message(params[:message][:chat][:id], message)
   end
 
-  def blacklist
-
+  def list_blacklist
+    debug("Blacklist list request from #{params[:message][:from][:first_name]}")
+    message = "List of current blacklisted words:"
+    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
+      Blacklist.all.order(word: :asc).each do |word|
+        message += "\n#{word.word}"
+      end
+    else
+      message = "Sorry, only admins can use this command."
+    end
+    send_message(params[:message][:chat][:id], message)
   end
 
   def add_blacklist
-
+    debug("New blacklist request from #{params[:message][:from][:first_name]}")
+    message = ""
+    force_reply = nil
+    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
+      message = "Reply to this message with the words you would like to add to the blacklist, with each word on a new line"
+      force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name - message\"}"
+    else
+      message = "Only admins can use this command. Sorry! 😢"
+    end
+    send_message(params[:message][:chat][:id], message, nil, force_reply)
   end
 
-  def remove_blacklist
+  def new_blacklist
+    debug("Adding to blacklist request from #{params[:message][:from][:first_name]}")
+    message = ""
+    added_words = 0
+    failed_words = 0
+    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
+      blacklist_words = params[:message][:text].downcase.split("\n")
+      blacklist_words.each do |blacklist_word|
+        if Blacklist.where(word: blacklist_word).none?
+          Blacklist.create(word: blacklist_word)
+          added_words += 1
+        else
+          failed_words += 1
+        end
+        message = "#{added_words} words added. #{failed_words} words failed to add."
+      end
+    else
+      message = "Only admins can use this command. Sorry! 😢"
+    end
+    send_message(params[:message][:chat][:id], message)
+  end
 
+  def delete_blacklist
+    debug("Remove blacklist request from #{params[:message][:from][:first_name]}")
+    message = ""
+    force_reply = nil
+    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
+      message = "Reply to this message with the words you would like to remove from the blacklist, with each word on a new line"
+      force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name - message\"}"
+    else
+      message = "Only admins can use this command. Sorry! 😢"
+    end
+    send_message(params[:message][:chat][:id], message, nil, force_reply)
+  end
+
+  def destroy_blacklist
+    debug("Destroy blacklist request from #{params[:message][:from][:first_name]}")
+    message = ""
+    removed_words = 0
+    failed_words = 0
+    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
+      blacklist_words = params[:message][:text].downcase.split("\n")
+      blacklist_words.each do |blacklist_word|
+        if !Blacklist.where(word: blacklist_word).none?
+          Blacklist.find_by(word: blacklist_word).destroy
+          removed_words += 1
+        else
+          failed_words += 1
+        end
+        message = "#{removed_words} words removed. #{failed_words} words failed to remove."
+      end
+    else
+      message = "Only admins can use this command. Sorry! 😢"
+    end
+    send_message(params[:message][:chat][:id], message)
   end
 
   def parse_details(message, username = "")
@@ -261,10 +341,39 @@ class BotController < ApplicationController
     send_message(params[:message][:chat][:id], "Please use the following link to join the main chat.\nThis is a single use link and will no longer work once you've joined.\n\n#{request_link(Rails.application.credentials.main_id!)}")
   end
 
-  def index
-    if params[:message].present? # Message received
-      if params[:message][:from][:id] == params[:message][:chat][:id] # Ensure message came from private chat
+  def check_blacklist
+    debug("Checking message for potential blacklisted word")
+    Blacklist.all.each do |word|
+      if params[:message][:text].downcase.include?(word.word)
+        debug("Black listed word found")
+        send_message(Rails.application.credentials.admin_id, "Potential blacklisted word found!\n\nWord: #{word.word}\n\nMessage forwarded below.")
+        forward_message(Rails.application.credentials.admin_id, params[:message][:chat][:id], params[:message][:message_id])
+        return
+      end
+    end
+  end
 
+  def update_name
+    debug("update name request for #{params[:message][:from][:first_name]}")
+    message = ""
+    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
+      edited_user = User.find_by(user_id: params[:message][:from][:id])
+      old_name = edited_user.username
+      edited_user.username = params[:message][:from][:first_name]
+      if edited_user.save
+        message = "Username updated from #{old_name} to #{params[:message][:from][:first_name]}"
+      else
+        message = "Unable to update name"
+      end
+    else
+      message = "Sorry, only admins can use this command."
+    end
+    send_message(params[:message][:chat][:id], message)
+  end
+
+  def index
+    if params[:message].present? && params[:message][:text] # Message received
+      if params[:message][:from][:id] == params[:message][:chat][:id] # Ensure message came from private chat
         if params[:message][:entities].present? && params[:message][:entities][0][:type] == "bot_command"
           case params[:message][:text]
             when /^\/start/ # Initial start/welcome message
@@ -279,12 +388,12 @@ class BotController < ApplicationController
               help
             when /^\/list_admins/ # List all admins
               list_admins
-            when /^\/blacklist/ # List all words on the blacklist
-              #list blacklist
+            when /^\/list_blacklist/ # List all words on the blacklist
+              list_blacklist
             when /^\/add_blacklist/ # Add word to blacklist
-              #add to blacklist
-            when /^\/remove_blacklist/ # Remove word from blacklist
-              #remove from blacklist
+              add_blacklist
+            when /^\/delete_blacklist/ # Remove word from blacklist
+              delete_blacklist
             when /^\/list_messages/ # List all configurable messages
               list_messages
             when /^\/add_message/ # Add configurable message
@@ -293,6 +402,8 @@ class BotController < ApplicationController
               delete_message
             when /^\/edit_message/ # Edit configurable message
               edit_message
+            when /^\/update_name/ # Update name in admin list
+              update_name
             else
               send_message(params[:message][:chat][:id], "Sorry, command not found")
           end
@@ -304,21 +415,23 @@ class BotController < ApplicationController
               destroy_message
             when /^Reply to this message with the edited message in the format:/
               save_message
+            when /^Reply to this message with the words you would like to add to the blacklist/
+              new_blacklist
+            when /^Reply to this message with the words you would like to remove from the blacklist/
+              destroy_blacklist
             else
               send_message(params[:message][:chat][:id], "I'm sorry, I don't quite understand")
           end
         end
       elsif params[:message][:chat][:id] == Rails.application.credentials.lobby_id! # Lobby chat
-
         if params[:message][:entities].present? && params[:message][:entities][0][:type] == "bot_command"
           case params[:message][:text]
             when /^\/link/ # Initial start/welcome message
               main_link
           end
-          
         end
       elsif params[:message][:chat][:id] == Rails.application.credentials.main_id! # Main chat
-        
+        check_blacklist
       end
     elsif params[:chat_member].present? && params[:chat_member][:old_chat_member][:status] != "member" && params[:chat_member][:new_chat_member][:status] == "member" # Check for new chat member
       if params[:chat_member][:chat][:id] == Rails.application.credentials.lobby_id! # Lobby chat
