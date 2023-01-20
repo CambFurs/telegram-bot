@@ -50,69 +50,71 @@ class BotController < ApplicationController
 
   def approve
     debug("Admin approval request from #{params[:message][:from][:first_name]}")
-    message = ""
-    if params[:message][:from][:id] == Rails.application.credentials.owner_id!
-      if params[:message][:reply_to_message].present?
-        if !User.where(user_id: params[:message][:reply_to_message][:text]).none?
-          user = User.find_by(user_id: params[:message][:reply_to_message][:text])
-          user.approved = true
-          if user.save
-            message = "Approving admin request for #{user.username}."
-            send_message(params[:message][:reply_to_message][:text], "You have been approved for admin access! Welcome!")
-          else
-            message = "Uh oh, something went wrong. Unable to approve admin"
-          end
-        else
-          message = "Admin request not found!"
-        end
-      else
-        message = "You must reply to a message in order to use this command."
-      end
-    else
-      message = "Only my owner can use this command. Sorry! 😢"
+
+    if params[:message][:from][:id] != Rails.application.credentials.owner_id!
+      send_message(params[:message][:chat][:id], "Only my owner can use this command. Sorry! 😢")
+      return
     end
-    send_message(params[:message][:chat][:id], message)
+    if !params[:message][:reply_to_message].present?
+      send_message(params[:message][:chat][:id], "You must reply to a message in order to use this command.")
+      return
+    end
+    if User.where(user_id: params[:message][:reply_to_message][:text]).none?
+      send_message(params[:message][:chat][:id], "Admin request not found!")
+      return
+    end
+
+    user = User.find_by(user_id: params[:message][:reply_to_message][:text])
+    user.approved = true
+    if user.save
+      send_message(params[:message][:chat][:id], "Approving admin request for #{user.username}.")
+      send_message(params[:message][:reply_to_message][:text], "You have been approved for admin access! Welcome!")
+    else
+      send_message(params[:message][:chat][:id], "Uh oh, something went wrong. Unable to approve admin")
+    end
   end
 
   def revoke
     debug("Admin revoke request from #{params[:message][:from][:first_name]} for #{params[:message][:reply_to_message].present? ? params[:message][:reply_to_message][:text] : params[:message][:text].delete_prefix("/revoke ")}")
-    message = ""
-    if params[:message][:from][:id] == Rails.application.credentials.owner_id!
-      if params[:message][:reply_to_message].present? || !params[:message][:text].delete_prefix("/revoke ").start_with?("/revoke")
-        user_id = params[:message][:reply_to_message].present? ? params[:message][:reply_to_message][:text] : params[:message][:text].delete_prefix("/revoke ")
-        if !User.where(user_id: user_id).none?
-          user = User.find_by(user_id: user_id)
-          user.approved = false
-          if user.save
-            message = "Revoking admin access for #{user.username}."
-            send_message(user_id, "Admin access revoked. If you want to become an admin again, you will have to re-apply")
-          else
-            message = "Something went wrong, unable to revoke access for #{user.username}."
-          end
-        else
-          message = "Admin not found, unable to revoke access."
-        end
-      else
-        message = "You must reply to a message or specify the user_id in order to use this command."
-      end
-    else
-      message = "Only my owner can use this command. Sorry! 😢"
+
+    if params[:message][:from][:id] != Rails.application.credentials.owner_id!
+      send_message(params[:message][:chat][:id], "Only my owner can use this command. Sorry! 😢")
+      return
     end
-    send_message(params[:message][:chat][:id], message)
+    if !(params[:message][:reply_to_message].present? || !params[:message][:text].delete_prefix("/revoke ").start_with?("/revoke"))
+      send_message(params[:message][:chat][:id], "You must reply to a message or specify the user_id in order to use this command.")
+      return
+    end
+
+    user_id = params[:message][:reply_to_message].present? ? params[:message][:reply_to_message][:text] : params[:message][:text].delete_prefix("/revoke ")
+
+    if User.where(user_id: user_id).none?
+      send_message(params[:message][:chat][:id], "Admin not found, unable to revoke access.")
+      return
+    end
+
+    user = User.find_by(user_id: user_id)
+    user.approved = false
+    if user.save
+      send_message(params[:message][:chat][:id], "Revoking admin access for #{user.username}.")
+      send_message(user_id, "Admin access revoked. If you want to become an admin again, you will have to re-apply")
+    else
+      send_message(params[:message][:chat][:id], "Something went wrong, unable to revoke access for #{user.username}.")
+    end
   end
 
   def apply
     debug("Admin application request from #{params[:message][:from][:first_name]}")
-    message = ""
-    if User.where(user_id: params[:message][:from][:id], approved: true).none?
-      new_user = User.where(user_id: params[:message][:from][:id]).none? ? User.create(username: params[:message][:from][:first_name], user_id: params[:message][:from][:id], approved: false) : User.find_by(user_id: params[:message][:from][:id])
-      message = "Admin request sent, please wait for approval."
-      send_message(Rails.application.credentials.owner_id!, "New admin request for #{new_user.username}.\nTo approve, please reply to next message with /approve")
-      send_message(Rails.application.credentials.owner_id!, "#{new_user.user_id}", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"Approve?\"}")
-    else
-      message = "You are already an admin, no need to apply again."
+    
+    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "You are already an admin, no need to apply again.")
+      return
     end
-    send_message(params[:message][:chat][:id], message)
+
+    new_user = User.where(user_id: params[:message][:from][:id]).none? ? User.create(username: params[:message][:from][:first_name], user_id: params[:message][:from][:id], approved: false) : User.find_by(user_id: params[:message][:from][:id])
+    send_message(params[:message][:chat][:id], "Admin request sent, please wait for approval.")
+    send_message(Rails.application.credentials.owner_id!, "New admin request for #{new_user.username}.\nTo approve, please reply to next message with /approve")
+    send_message(Rails.application.credentials.owner_id!, "#{new_user.user_id}", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"Approve?\"}")
   end
 
   def help
@@ -122,212 +124,215 @@ class BotController < ApplicationController
 
   def list_admins
     debug("Admin list request from #{params[:message][:from][:first_name]}")
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
+    end
+
     message = "List of current admins:"
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      User.where(approved: true).each do |user|
-        message += "\n#{user.username}: #{user.user_id}"
-      end
-    else
-      message = "Sorry, only admins can use this command."
+    User.where(approved: true).each do |user|
+      message += "\n#{user.username}: #{user.user_id}"
     end
     send_message(params[:message][:chat][:id], message)
   end
 
   def list_messages
     debug("Message list request from #{params[:message][:from][:first_name]}")
+    
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
+    end
+
     message = "List of current messages:"
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      Message.all.each do |single_message|
-        message += "\n#{single_message.message_id} - #{single_message.message}"
-      end
-    else
-      message = "Sorry, only admins can use this command."
+    Message.all.each do |single_message|
+      message += "\n#{single_message.message_id} - #{single_message.message}"
     end
     send_message(params[:message][:chat][:id], message)
   end
 
   def add_message
     debug("New message request from #{params[:message][:from][:first_name]}")
-    message = ""
-    force_reply = nil
-    if params[:message][:from][:id] == Rails.application.credentials.owner_id!
-      message = "Reply to this message with the new message in the format:\nmessage_name - message"
-      force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name - message\"}"
-    else
-      message = "Only my owner can use this command. Sorry! 😢"
+
+    if params[:message][:from][:id] != Rails.application.credentials.owner_id!
+      send_message(params[:message][:chat][:id], "Only my owner can use this command. Sorry! 😢")
+      return
     end
-    send_message(params[:message][:chat][:id], message, nil, force_reply)
+
+    send_message(params[:message][:chat][:id], "Reply to this message with the new message in the format:\nmessage_name - message", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"name - message\"}")
   end
 
   def new_message
     debug("New message response from #{params[:message][:from][:first_name]}, message #{params[:message][:text]}")
-    message = ""
-    if params[:message][:from][:id] == Rails.application.credentials.owner_id!
-      message_parts = params[:message][:text].split(" - ")
-      if message_parts.length > 1
-        new_message = Message.create(message_id: message_parts[0], message: message_parts[1..-1].join(" - "))
-        message = "New message created:\n#{new_message.message_id} - #{new_message.message}"
-      else
-        message = "Message in incorrect format"
-      end
-    else
-      message = "Only my owner can use this command. Sorry! 😢"
+    
+    if params[:message][:from][:id] != Rails.application.credentials.owner_id!
+      send_message(params[:message][:chat][:id], "Only my owner can use this command. Sorry! 😢")
+      return
     end
-    send_message(params[:message][:chat][:id], message)
+
+    message_parts = params[:message][:text].split(" - ")
+
+    if !(message_parts.length > 1)
+      send_message(params[:message][:chat][:id], "Message in incorrect format")
+      return
+    end
+
+    new_message = Message.create(message_id: message_parts[0], message: message_parts[1..-1].join(" - "))
+    send_message(params[:message][:chat][:id], "New message created:\n#{new_message.message_id} - #{new_message.message}")
   end
 
   def delete_message
     debug("Delete message request from #{params[:message][:from][:first_name]}")
-    message = ""
-    force_reply = nil
-    if params[:message][:from][:id] == Rails.application.credentials.owner_id!
-      message = "Reply to this message with the message_name you'd like to delete."
-      force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name\"}"
-    else
-      message = "Only my owner can use this command. Sorry! 😢"
+
+    if params[:message][:from][:id] != Rails.application.credentials.owner_id!
+      send_message(params[:message][:chat][:id], "Only my owner can use this command. Sorry! 😢")
+      return
     end
-    send_message(params[:message][:chat][:id], message, nil, force_reply)
+    
+    send_message(params[:message][:chat][:id], "Reply to this message with the message_name you'd like to delete.", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"name\"}")
   end
 
   def destroy_message
     debug("Delete message response from #{params[:message][:from][:first_name]}, for message #{params[:message][:text]}")
-    message = ""
-    if params[:message][:from][:id] == Rails.application.credentials.owner_id!
-      if !Message.where(message_id: params[:message][:text]).none?
-        if Message.find_by(message_id: params[:message][:text]).destroy
-          message = "Message deleted!"
-        else
-          message = "Issue deleting message."
-        end
-      else
-        message = "Unable to find message to delete."
-      end
+
+    if params[:message][:from][:id] != Rails.application.credentials.owner_id!
+      send_message(params[:message][:chat][:id], "Only my owner can use this command. Sorry! 😢")
+      return
+    end
+    if Message.where(message_id: params[:message][:text]).none?
+      send_message(params[:message][:chat][:id], "Unable to find message to delete.")
+      return
+    end
+    
+    if Message.find_by(message_id: params[:message][:text]).destroy
+      message = "Message deleted!"
     else
-      message = "Only my owner can use this command. Sorry! 😢"
+      message = "Issue deleting message."
     end
     send_message(params[:message][:chat][:id], message)
   end
 
   def edit_message
     debug("Edit message request from #{params[:message][:from][:first_name]}")
-    message = ""
-    force_reply = nil
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-        message = "Reply to this message with the edited message in the format:\nmessage_name - message"
-        force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name - new message\"}"
-    else
-      message = "Sorry, only admins can use this command."
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
     end
-    send_message(params[:message][:chat][:id], message, nil, force_reply)
+
+    send_message(params[:message][:chat][:id], "Reply to this message with the edited message in the format:\nmessage_name - message", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"name - new message\"}")
   end
 
   def save_message
     debug("Edit message response from #{params[:message][:from][:first_name]}, for message #{params[:message][:text]}")
-    message = ""
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      message_parts = params[:message][:text].split(" - ")
-      if message_parts.length > 1
-        if !Message.where(message_id: message_parts[0]).none?
-          edited_message = Message.find_by(message_id: message_parts[0])
-          edited_message.message = message_parts[1..-1].join(" - ")
-          if edited_message.save
-            message = "Saved edited message."
-          else
-            message = "Unable to save new message."
-          end
-        else
-          message = "Unable to find message to edit."
-        end
-      else
-        message = "Incorrect format for edited message."
-      end
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Only my owner can use this command. Sorry! 😢")
+      return
+    end
+    message_parts = params[:message][:text].split(" - ")
+    if !(message_parts.length > 1)
+      send_message(params[:message][:chat][:id], "Incorrect format for edited message.")
+      return
+    end
+    if Message.where(message_id: message_parts[0]).none?
+      send_message(params[:message][:chat][:id], "Unable to find message to edit.")
+      return
+    end
+
+    edited_message = Message.find_by(message_id: message_parts[0])
+    edited_message.message = message_parts[1..-1].join(" - ")
+    if edited_message.save
+      message = "Saved edited message."
     else
-      message = "Only my owner can use this command. Sorry! 😢"
+      message = "Unable to save new message."
     end
     send_message(params[:message][:chat][:id], message)
   end
 
   def list_blacklist
     debug("Blacklist list request from #{params[:message][:from][:first_name]}")
-    message = "List of current blacklisted words:"
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      Blacklist.all.order(word: :asc).each do |word|
-        message += "\n#{word.word}"
-      end
-    else
-      message = "Sorry, only admins can use this command."
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
     end
+
+    message = "List of current blacklisted words:"
+
+    Blacklist.all.order(word: :asc).each do |word|
+      message += "\n#{word.word}"
+    end
+
     send_message(params[:message][:chat][:id], message)
   end
 
   def add_blacklist
     debug("New blacklist request from #{params[:message][:from][:first_name]}")
-    message = ""
-    force_reply = nil
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      message = "Reply to this message with the words you would like to add to the blacklist, with each word on a new line"
-      force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name - message\"}"
-    else
-      message = "Only admins can use this command. Sorry! 😢"
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Only admins can use this command. Sorry! 😢")
+      return
     end
-    send_message(params[:message][:chat][:id], message, nil, force_reply)
+
+    send_message(params[:message][:chat][:id], "Reply to this message with the words you would like to add to the blacklist, with each word on a new line", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"word\"}")
   end
 
   def new_blacklist
     debug("Adding to blacklist request from #{params[:message][:from][:first_name]}")
-    message = ""
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Only admins can use this command. Sorry! 😢")
+      return
+    end
+
     added_words = 0
     failed_words = 0
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      blacklist_words = params[:message][:text].downcase.split("\n")
-      blacklist_words.each do |blacklist_word|
-        if Blacklist.where(word: blacklist_word).none?
-          Blacklist.create(word: blacklist_word)
-          added_words += 1
-        else
-          failed_words += 1
-        end
-        message = "#{added_words} words added. #{failed_words} words failed to add."
+
+    blacklist_words = params[:message][:text].downcase.split("\n")
+    blacklist_words.each do |blacklist_word|
+      if Blacklist.where(word: blacklist_word).none? && Blacklist.create(word: blacklist_word)
+        added_words += 1
+      else
+        failed_words += 1
       end
-    else
-      message = "Only admins can use this command. Sorry! 😢"
     end
-    send_message(params[:message][:chat][:id], message)
+    send_message(params[:message][:chat][:id], "#{added_words} words added. #{failed_words} words failed to add.")
   end
 
   def delete_blacklist
     debug("Remove blacklist request from #{params[:message][:from][:first_name]}")
-    message = ""
-    force_reply = nil
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      message = "Reply to this message with the words you would like to remove from the blacklist, with each word on a new line"
-      force_reply = "{\"force_reply\": true, \"input_field_placeholder\": \"name - message\"}"
-    else
-      message = "Only admins can use this command. Sorry! 😢"
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Only admins can use this command. Sorry! 😢")
+      return
     end
-    send_message(params[:message][:chat][:id], message, nil, force_reply)
+
+    send_message(params[:message][:chat][:id], "Reply to this message with the words you would like to remove from the blacklist, with each word on a new line", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"word\"}")
   end
 
   def destroy_blacklist
     debug("Destroy blacklist request from #{params[:message][:from][:first_name]}")
-    message = ""
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Only admins can use this command. Sorry! 😢")
+      return
+    end
+
     removed_words = 0
     failed_words = 0
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      blacklist_words = params[:message][:text].downcase.split("\n")
-      blacklist_words.each do |blacklist_word|
-        if !Blacklist.where(word: blacklist_word).none?
-          Blacklist.find_by(word: blacklist_word).destroy
-          removed_words += 1
-        else
-          failed_words += 1
-        end
-        message = "#{removed_words} words removed. #{failed_words} words failed to remove."
+    blacklist_words = params[:message][:text].downcase.split("\n")
+
+    blacklist_words.each do |blacklist_word|
+      if !Blacklist.where(word: blacklist_word).none? && Blacklist.find_by(word: blacklist_word).destroy
+        removed_words += 1
+      else
+        failed_words += 1
       end
-    else
-      message = "Only admins can use this command. Sorry! 😢"
     end
-    send_message(params[:message][:chat][:id], message)
+
+    send_message(params[:message][:chat][:id], "#{removed_words} words removed. #{failed_words} words failed to remove.")
   end
 
   def parse_details(message, username = "")
@@ -356,19 +361,137 @@ class BotController < ApplicationController
   def update_name
     debug("update name request for #{params[:message][:from][:first_name]}")
     message = ""
-    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      edited_user = User.find_by(user_id: params[:message][:from][:id])
-      old_name = edited_user.username
-      edited_user.username = params[:message][:from][:first_name]
-      if edited_user.save
-        message = "Username updated from #{old_name} to #{params[:message][:from][:first_name]}"
-      else
-        message = "Unable to update name"
-      end
-    else
-      message = "Sorry, only admins can use this command."
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
     end
+
+    edited_user = User.find_by(user_id: params[:message][:from][:id])
+    old_name = edited_user.username
+    edited_user.username = params[:message][:from][:first_name]
+
+    if edited_user.save
+      send_message(params[:message][:chat][:id], "Username updated from #{old_name} to #{params[:message][:from][:first_name]}")
+    else
+      send_message(params[:message][:chat][:id], "Unable to update name")
+    end
+  end
+
+  def list_meets
+    debug("Meet list request from #{params[:message][:from][:first_name]}")
+    
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
+    end
+
+    message = "List of current meets:"
+    Meet.all.order(meet_date: :asc).each do |meet|
+      message += "\n#{meet.meet_date}"
+    end
+
     send_message(params[:message][:chat][:id], message)
+  end
+
+  def add_meet
+    debug("Add meet request from #{params[:message][:from][:first_name]}")
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
+    end
+
+    send_message(params[:message][:chat][:id], "Reply to this message with the new date in the format:\ndd/mm/yyyy - physical/virtual - location - description", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"dd/mm/yyyy - physical/virtual - location - description\"}")
+  end
+
+  def new_meet
+    debug("Add meet reply from #{params[:message][:from][:first_name]}")
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
+    end
+
+    meet_parts = params[:message][:text].split(" - ")
+    if !(meet_parts.length > 3)
+      send_message(params[:message][:chat][:id], "Invalid format, please try again.")
+      return
+    end
+
+    begin date = Date.strptime(meet_parts[0], "%d/%m/%Y")
+
+      if !Meet.where(meet_date: date).none?
+        send_message(params[:message][:chat][:id], "A meet already exists for this date.")
+        return
+      end
+      if !(meet_parts[1] == "physical" || meet_parts[1] == "virtual")
+        send_message(params[:message][:chat][:id], "You need to define whether the meet will be physical or virtual.")
+        return
+      end
+
+      if Meet.create(meet_date: date, in_person: meet_parts[1] == "physical" ? true : false, location: meet_parts[2], notes: meet_parts[3..-1].join(" - "))
+        send_message(params[:message][:chat][:id], "Meet saved.")
+      else
+        send_message(params[:message][:chat][:id], "Error saving new meet")
+      end
+
+    rescue
+      send_message(params[:message][:chat][:id], "Invalid date format.")
+    end
+  end
+
+  def delete_meet
+    debug("Delete meet request from #{params[:message][:from][:first_name]}")
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
+    end
+
+    send_message(params[:message][:chat][:id], "Reply to this message with the date of the meet you would like to delete in the format: dd/mm/yyyy", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"date\"}")
+  end
+
+  def destroy_meet
+    debug("Delete meet reply from #{params[:message][:from][:first_name]}")
+    message = ""
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Only admins can use this command. Sorry! 😢")
+      return
+    end
+
+    begin date = Date.strptime(params[:message][:text], "%d/%m/%Y")
+      if Meet.where(meet_date: date).none?
+        send_message(params[:message][:chat][:id], "Unable to find meet on this date.")
+        return
+      end
+
+      if Meet.where(meet_date: date).first.destroy
+        send_message(params[:message][:chat][:id], "Meet deleted.")
+      else
+        send_message(params[:message][:chat][:id], "Unable ot delete meet.")
+      end
+
+    rescue
+      send_message(params[:message][:chat][:id], "Invalid date format.")
+    end
+  end
+
+  def talk
+    debug("Talk request from #{params[:message][:from][:first_name]}")
+
+    if User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
+      return
+    end
+
+    send_message(params[:message][:chat][:id], "Reply to this message with what you would like to say.", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"message\"}")
+  end
+
+  def send_talk
+    debug("Talk request from #{params[:message][:from][:first_name]}")
+
+    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
+      send_message(Rails.application.credentials.main_id!, params[:message][:text])
+    end
   end
 
   def index
@@ -404,6 +527,14 @@ class BotController < ApplicationController
               edit_message
             when /^\/update_name/ # Update name in admin list
               update_name
+            when /^\/list_meets/ # List all meets
+              list_meets
+            when /^\/add_meet/ # Add a new meet
+              add_meet
+            when /^\/delete_meet/ # Remove an existing meet
+              delete_meet
+            when /^\/talk/ # Remove word from blacklist
+              talk
             else
               send_message(params[:message][:chat][:id], "Sorry, command not found")
           end
@@ -419,6 +550,12 @@ class BotController < ApplicationController
               new_blacklist
             when /^Reply to this message with the words you would like to remove from the blacklist/
               destroy_blacklist
+            when /^Reply to this message with what you would like to say/
+              send_talk
+            when /^Reply to this message with the new date in the format:/
+              new_meet
+            when /^Reply to this message with the date of the meet you would like to delete in the format:/
+              destroy_meet
             else
               send_message(params[:message][:chat][:id], "I'm sorry, I don't quite understand")
           end
