@@ -10,11 +10,21 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2023_01_17_083900) do
+ActiveRecord::Schema[7.0].define(version: 2023_01_23_124900) do
   create_table "blacklists", force: :cascade do |t|
     t.string "word"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+  end
+
+  create_table "meets", force: :cascade do |t|
+    t.date "meet_date"
+    t.boolean "in_person"
+    t.string "location"
+    t.string "notes"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.integer "message_id"
   end
 
   create_table "messages", force: :cascade do |t|
