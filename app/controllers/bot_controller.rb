@@ -9,6 +9,15 @@ class BotController < ApplicationController
     end
   end
 
+  def send_sticker(chat_id, sticker)
+    response = HTTP.get("https://api.telegram.org/bot#{Rails.application.credentials.bot_api!}/sendSticker", params: {chat_id: chat_id, sticker: sticker})
+    if response.status.success?
+      debug("Message sent: a sticker\nResponse: #{response.body}")
+    else
+      debug("Error sending sticker: \nError: #{response.body}")
+    end
+  end
+
   def forward_message(chat_id, origin_chat_id, message_id)
     response = HTTP.get("https://api.telegram.org/bot#{Rails.application.credentials.bot_api!}/forwardMessage", params: {chat_id: chat_id, from_chat_id: origin_chat_id, message_id: message_id})
     if response.status.success?
@@ -490,12 +499,16 @@ class BotController < ApplicationController
     debug("Talk request from #{params[:message][:from][:first_name]}")
 
     if !User.where(user_id: params[:message][:from][:id], approved: true).none?
-      send_message(Rails.application.credentials.main_id!, params[:message][:text])
+      if params[:message][:text].present?
+        send_message(Rails.application.credentials.main_id!, params[:message][:text])
+      elsif params[:message][:sticker].present?
+        send_sticker(Rails.application.credentials.main_id!, params[:message][:sticker][:file_id])
+      end
     end
   end
 
   def index
-    if params[:message].present? && params[:message][:text] # Message received
+    if params[:message].present? && (params[:message][:text].present? || params[:message][:sticker].present?) # Message received
       if params[:message][:from][:id] == params[:message][:chat][:id] # Ensure message came from private chat
         if params[:message][:entities].present? && params[:message][:entities][0][:type] == "bot_command"
           case params[:message][:text]
