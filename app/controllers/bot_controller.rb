@@ -128,7 +128,12 @@ class BotController < ApplicationController
 
   def help
     debug("Help message")
-    send_message(params[:message][:chat][:id], "This bot is for CambFurs admins to help administrate our Telegram chats.\nInitial available commands:\n\/help - This message\n\/start - Initial welcome message\n\/apply - Send a request to become an admin\n\nOnce approved, you can use the following commands:\n\/list_admins - List all admins and their user_id\n\/list_messages - List of all messages\n\/edit_message - Edit a message which I post\n\/list_blacklist - List all words on the blacklist\n\/add_blacklist - Add a word to the blacklist\n\/delete_blacklist - Remove a word from the blacklist\n\/update_name - Updates your name in the admin list to your current name\n\nOnly my owner can use these commands:\n\/approve - Approve an admin\n\/revoke user_id - Revoke admin access\n\/add_message - add a new message to the system for me to use\n\/delete_message - Delete a message from my memory\n\nThis can only be used in the lobby:\n\/link - Creates a link for a user to join the main group")
+    message = "This bot is for CambFurs admins to help administrate our Telegram chats.\nInitial available commands:\n\/help - This message\n\/start - Initial welcome message\n\/apply - Send a request to become an admin"
+    if !User.where(user_id: params[:message][:from][:id], approved: true).none?
+      message += "\n\nOnce approved, you can use the following commands:\n\/list_admins - List all admins and their user_id\n\/list_messages - List of all messages\n\/edit_message - Edit a message which I post\n\/list_blacklist - List all words on the blacklist\n\/add_blacklist - Add a word to the blacklist\n\/delete_blacklist - Remove a word from the blacklist\n\/update_name - Updates your name in the admin list to your current name\n\/talk - Allows you to send a message/sticker as Catbot\n\nOnly my owner can use these commands:\n\/approve - Approve an admin\n\/revoke user_id - Revoke admin access\n\/add_message - add a new message to the system for me to use\n\/delete_message - Delete a message from my memory\n\nThis can only be used in the lobby:\n\/link - Creates a link for a user to join the main group"
+    end
+    
+    send_message(params[:message][:chat][:id], message)
   end
 
   def list_admins
@@ -156,7 +161,7 @@ class BotController < ApplicationController
 
     message = "List of current messages:"
     Message.all.each do |single_message|
-      message += "\n#{single_message.message_id} - #{single_message.message}"
+      message += "\n\n#{single_message.message_id} - #{single_message.message}"
     end
     send_message(params[:message][:chat][:id], message)
   end
@@ -386,104 +391,6 @@ class BotController < ApplicationController
     end
   end
 
-  def list_meets
-    debug("Meet list request from #{params[:message][:from][:first_name]}")
-    
-    if User.where(user_id: params[:message][:from][:id], approved: true).none?
-      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
-      return
-    end
-
-    message = "List of current meets:"
-    Meet.all.order(meet_date: :asc).each do |meet|
-      message += "\n#{meet.meet_date}"
-    end
-
-    send_message(params[:message][:chat][:id], message)
-  end
-
-  def add_meet
-    debug("Add meet request from #{params[:message][:from][:first_name]}")
-
-    if User.where(user_id: params[:message][:from][:id], approved: true).none?
-      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
-      return
-    end
-
-    send_message(params[:message][:chat][:id], "Reply to this message with the new date in the format:\ndd/mm/yyyy - physical/virtual - location - description", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"dd/mm/yyyy - physical/virtual - location - description\"}")
-  end
-
-  def new_meet
-    debug("Add meet reply from #{params[:message][:from][:first_name]}")
-
-    if User.where(user_id: params[:message][:from][:id], approved: true).none?
-      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
-      return
-    end
-
-    meet_parts = params[:message][:text].split(" - ")
-    if !(meet_parts.length > 3)
-      send_message(params[:message][:chat][:id], "Invalid format, please try again.")
-      return
-    end
-
-    begin date = Date.strptime(meet_parts[0], "%d/%m/%Y")
-
-      if !Meet.where(meet_date: date).none?
-        send_message(params[:message][:chat][:id], "A meet already exists for this date.")
-        return
-      end
-      if !(meet_parts[1] == "physical" || meet_parts[1] == "virtual")
-        send_message(params[:message][:chat][:id], "You need to define whether the meet will be physical or virtual.")
-        return
-      end
-
-      if Meet.create(meet_date: date, in_person: meet_parts[1] == "physical" ? true : false, location: meet_parts[2], notes: meet_parts[3..-1].join(" - "))
-        send_message(params[:message][:chat][:id], "Meet saved.")
-      else
-        send_message(params[:message][:chat][:id], "Error saving new meet")
-      end
-
-    rescue
-      send_message(params[:message][:chat][:id], "Invalid date format.")
-    end
-  end
-
-  def delete_meet
-    debug("Delete meet request from #{params[:message][:from][:first_name]}")
-    if User.where(user_id: params[:message][:from][:id], approved: true).none?
-      send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
-      return
-    end
-
-    send_message(params[:message][:chat][:id], "Reply to this message with the date of the meet you would like to delete in the format: dd/mm/yyyy", nil, "{\"force_reply\": true, \"input_field_placeholder\": \"date\"}")
-  end
-
-  def destroy_meet
-    debug("Delete meet reply from #{params[:message][:from][:first_name]}")
-    message = ""
-    if User.where(user_id: params[:message][:from][:id], approved: true).none?
-      send_message(params[:message][:chat][:id], "Only admins can use this command. Sorry! 😢")
-      return
-    end
-
-    begin date = Date.strptime(params[:message][:text], "%d/%m/%Y")
-      if Meet.where(meet_date: date).none?
-        send_message(params[:message][:chat][:id], "Unable to find meet on this date.")
-        return
-      end
-
-      if Meet.where(meet_date: date).first.destroy
-        send_message(params[:message][:chat][:id], "Meet deleted.")
-      else
-        send_message(params[:message][:chat][:id], "Unable ot delete meet.")
-      end
-
-    rescue
-      send_message(params[:message][:chat][:id], "Invalid date format.")
-    end
-  end
-
   def talk
     debug("Talk request from #{params[:message][:from][:first_name]}")
 
@@ -540,12 +447,6 @@ class BotController < ApplicationController
               edit_message
             when /^\/update_name/ # Update name in admin list
               update_name
-            when /^\/list_meets/ # List all meets
-              list_meets
-            when /^\/add_meet/ # Add a new meet
-              add_meet
-            when /^\/delete_meet/ # Remove an existing meet
-              delete_meet
             when /^\/talk/ # Remove word from blacklist
               talk
             else
@@ -565,8 +466,6 @@ class BotController < ApplicationController
               destroy_blacklist
             when /^Reply to this message with what you would like to say/
               send_talk
-            when /^Reply to this message with the new date in the format:/
-              new_meet
             when /^Reply to this message with the date of the meet you would like to delete in the format:/
               destroy_meet
             else
