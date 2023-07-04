@@ -356,6 +356,11 @@ class BotController < ApplicationController
   end
 
   def main_link
+
+    if params[:message][:from][:id] != 1087968824
+      return
+    end
+
     debug("Generating link for main chat for #{params[:message][:from][:username]}")
     send_message(params[:message][:chat][:id], "Please use the following link to join the main chat.\nThis is a single use link and will no longer work once you've joined.\n\n#{request_link(Rails.application.credentials.main_id!)}")
   end
@@ -363,7 +368,7 @@ class BotController < ApplicationController
   def check_blacklist
     debug("Checking message for potential blacklisted word")
     Blacklist.all.each do |word|
-      if params[:message][:text].downcase.include?(word.word)
+      if params[:message][:text].match(/\b(?=\w)#{word.word}\b(?<=\w)/i).present?
         debug("Black listed word found")
         send_message(Rails.application.credentials.admin_id, "Potential blacklisted word found!\n\nWord: #{word.word}\n\nMessage forwarded below.")
         forward_message(Rails.application.credentials.admin_id, params[:message][:chat][:id], params[:message][:message_id])
@@ -480,7 +485,9 @@ class BotController < ApplicationController
           end
         end
       elsif params[:message][:chat][:id] == Rails.application.credentials.main_id! # Main chat
-        check_blacklist
+        if params[:message][:text].present?
+          check_blacklist
+        end
       end
     elsif params[:chat_member].present? && params[:chat_member][:old_chat_member][:status] != "member" && params[:chat_member][:new_chat_member][:status] == "member" # Check for new chat member
       if params[:chat_member][:chat][:id] == Rails.application.credentials.lobby_id! # Lobby chat
