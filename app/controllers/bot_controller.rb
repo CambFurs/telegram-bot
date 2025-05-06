@@ -379,7 +379,6 @@ class BotController < ApplicationController
 
   def update_name
     debug("update name request for #{params[:message][:from][:first_name]}")
-    message = ""
     if User.where(user_id: params[:message][:from][:id], approved: true).none?
       send_message(params[:message][:chat][:id], "Sorry, only admins can use this command.")
       return
@@ -492,8 +491,13 @@ class BotController < ApplicationController
     elsif params[:chat_member].present? && params[:chat_member][:old_chat_member][:status] != "member" && params[:chat_member][:new_chat_member][:status] == "member" # Check for new chat member
       if params[:chat_member][:chat][:id] == Rails.application.credentials.lobby_id! # Lobby chat
         debug("New user entered the lobby")
+        response = HTTP.get("https://countersign.chat/api/scammer_ids.json")
+        if response.status.success?
+          scammer_ids = response.parse
+          possible_scammer = scammer_ids.include?(params[:chat_member][:new_chat_member][:user][:id])
+        end
         User.where(approved: true).each do |user|
-          send_message(user.user_id, "New user in the CambFurs lobby:\n#{params[:chat_member][:new_chat_member][:user][:first_name]}")
+          send_message(user.user_id, "New user in the CambFurs lobby:\n#{params[:chat_member][:new_chat_member][:user][:first_name]}#{possible_scammer ? "\n\nThis user is a known scammer, please be careful!\n\nPlease search https://t.me/scamtrackinglist for #{params[:chat_member][:new_chat_member][:user][:id]} for more information" : ""}")
         end
         send_message(params[:chat_member][:chat][:id], parse_details("lobby_welcome", params[:chat_member][:new_chat_member][:user][:first_name]))
       elsif params[:chat_member][:chat][:id] == Rails.application.credentials.main_id! # Main chat
